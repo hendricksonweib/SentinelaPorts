@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import icon from "leaflet/dist/images/marker-icon.png";
 import iconShadow from "leaflet/dist/images/marker-shadow.png";
 
-// Corrige os ícones padrão do Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconUrl: icon,
@@ -26,8 +25,9 @@ interface RiskArea {
 
 export default function MapaPorto() {
   const mapRef = useRef<L.Map | null>(null);
+  const drawnPolygon = useRef<L.Polygon | null>(null);
   const [riskAreas, setRiskAreas] = useState<RiskArea[]>([]);
-  const [workers, setWorkers] = useState<Worker[]>([
+  const [workers] = useState<Worker[]>([
     {
       id: "1",
       lat: -2.5828889,
@@ -36,11 +36,13 @@ export default function MapaPorto() {
   ]);
   const [drawing, setDrawing] = useState(false);
   const [newArea, setNewArea] = useState<[number, number][]>([]);
-  const drawnLayer = useRef<L.Polygon | null>(null);
 
   useEffect(() => {
     if (!mapRef.current) {
-      const map = L.map("map").setView([-2.567, -44.371], 14);
+      const map = L.map("map", {
+        center: [-2.567, -44.371],
+        zoom: 14,
+      });
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
@@ -48,10 +50,8 @@ export default function MapaPorto() {
 
       map.on("click", (e: L.LeafletMouseEvent) => {
         if (drawing) {
-          setNewArea((prev) => {
-            const updated = [...prev, [e.latlng.lat, e.latlng.lng]];
-            return updated;
-          });
+          const latlng: [number, number] = [e.latlng.lat, e.latlng.lng];
+          setNewArea((prev) => [...prev, latlng]);
         }
       });
 
@@ -63,30 +63,24 @@ export default function MapaPorto() {
     const map = mapRef.current;
     if (!map) return;
 
-    // Limpa camadas anteriores
-    map.eachLayer((layer) => {
-      if (layer instanceof L.Polygon || layer instanceof L.Marker) {
-        map.removeLayer(layer);
-      }
-    });
+    // Remove visualização anterior do polígono sendo desenhado
+    if (drawnPolygon.current) {
+      map.removeLayer(drawnPolygon.current);
+    }
 
-    // Renderiza áreas de risco
-    riskAreas.forEach((area) => {
-      L.polygon(area.coordinates, { color: "red" }).addTo(map);
-    });
-
-    // Renderiza a nova área em desenho
     if (drawing && newArea.length > 1) {
-      if (drawnLayer.current) {
-        map.removeLayer(drawnLayer.current);
-      }
-      drawnLayer.current = L.polygon(newArea, {
+      drawnPolygon.current = L.polygon(newArea, {
         color: "orange",
         dashArray: "4",
       }).addTo(map);
     }
 
-    // Renderiza trabalhadores
+    // Renderizar áreas de risco salvas
+    riskAreas.forEach((area) => {
+      L.polygon(area.coordinates, { color: "red" }).addTo(map);
+    });
+
+    // Renderizar trabalhadores
     workers.forEach((worker) => {
       const marker = L.marker([worker.lat, worker.lng]).addTo(map);
 
@@ -97,7 +91,7 @@ export default function MapaPorto() {
         }
       });
     });
-  }, [riskAreas, workers, newArea, drawing]);
+  }, [riskAreas, newArea, drawing]);
 
   const handleCreateRiskArea = () => {
     if (newArea.length > 2) {
@@ -108,27 +102,20 @@ export default function MapaPorto() {
       setRiskAreas((prev) => [...prev, newRisk]);
       setNewArea([]);
       setDrawing(false);
-      if (drawnLayer.current && mapRef.current) {
-        mapRef.current.removeLayer(drawnLayer.current);
-        drawnLayer.current = null;
+
+      if (drawnPolygon.current && mapRef.current) {
+        mapRef.current.removeLayer(drawnPolygon.current);
+        drawnPolygon.current = null;
       }
     }
   };
 
   return (
-    <div className="relative w-full h-[600px] rounded-xl overflow-hidden">
-      <div id="map" className="absolute inset-0 z-0" />
+    <div className="relative w-full h-[600px]">
+      <div id="map" className="absolute inset-0 z-0 rounded-xl" />
 
-      {drawing && (
-        <div className="absolute top-4 left-4 z-20 flex gap-4">
-          <Button variant="destructive" onClick={handleCreateRiskArea}>
-            Confirmar Área
-          </Button>
-        </div>
-      )}
-
-      {!drawing && (
-        <div className="absolute top-4 left-4 z-20">
+      <div className="absolute top-4 left-4 z-20 flex gap-4">
+        {!drawing && (
           <Button
             onClick={() => {
               setNewArea([]);
@@ -137,8 +124,13 @@ export default function MapaPorto() {
           >
             Criar Área de Risco
           </Button>
-        </div>
-      )}
+        )}
+        {drawing && newArea.length > 2 && (
+          <Button variant="destructive" onClick={handleCreateRiskArea}>
+            Confirmar Área
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
