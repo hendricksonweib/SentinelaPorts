@@ -1,123 +1,144 @@
 "use client";
-
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Polygon,
-  useMapEvents,
-} from "react-leaflet";
-import { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { Button } from "@/components/ui/button";
+import icon from "leaflet/dist/images/marker-icon.png";
+import iconShadow from "leaflet/dist/images/marker-shadow.png";
 
-// Coordenadas do centro do Porto do Itaqui
-const CENTER: [number, number] = [-2.5715, -44.372];
+// Corrige os ícones padrão do Leaflet
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+});
 
-// Pontos de referência fixos
-const pontosFixos: { nome: string; coords: [number, number] }[] = [
-  { nome: "M01", coords: [-2.58289, -44.36861] },
-  { nome: "M02", coords: [-2.57658, -44.36967] },
-  { nome: "PT A’", coords: [-2.57, -44.37964] },
-  { nome: "PT A", coords: [-2.56783, -44.37475] },
-  { nome: "PT B", coords: [-2.56658, -44.37411] },
-  { nome: "MG", coords: [-2.56947, -44.35736] },
-  { nome: "PT 6", coords: [-2.57678, -44.36408] },
-  { nome: "PT H", coords: [-2.61839, -44.35711] },
-  { nome: "PT J", coords: [-2.61931, -44.36253] },
-];
+interface Worker {
+  id: string;
+  lat: number;
+  lng: number;
+}
 
-// Componente auxiliar para capturar cliques no mapa
-function CriadorDeArea({
-  ativa,
-  onAdicionarPonto,
-}: {
-  ativa: boolean;
-  onAdicionarPonto: (coords: [number, number]) => void;
-}) {
-  useMapEvents({
-    click(e) {
-      if (ativa) {
-        const novaCoord: [number, number] = [e.latlng.lat, e.latlng.lng];
-        onAdicionarPonto(novaCoord);
-      }
-    },
-  });
-  return null;
+interface RiskArea {
+  id: string;
+  coordinates: [number, number][];
 }
 
 export default function MapaPorto() {
-  const [areasDeRisco, setAreasDeRisco] = useState<[number, number][][]>([]);
-  const [areaTemp, setAreaTemp] = useState<[number, number][]>([]);
-  const [modoCriacao, setModoCriacao] = useState(false);
+  const mapRef = useRef<L.Map | null>(null);
+  const [riskAreas, setRiskAreas] = useState<RiskArea[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([
+    {
+      id: "1",
+      lat: -2.5828889,
+      lng: -44.368611,
+    },
+  ]);
+  const [drawing, setDrawing] = useState(false);
+  const [newArea, setNewArea] = useState<[number, number][]>([]);
+  const drawnLayer = useRef<L.Polygon | null>(null);
 
-  const adicionarPonto = (coords: [number, number]) => {
-    setAreaTemp((prev) => [...prev, coords]);
-  };
+  useEffect(() => {
+    if (!mapRef.current) {
+      const map = L.map("map").setView([-2.567, -44.371], 14);
 
-  const finalizarArea = () => {
-    if (areaTemp.length >= 3) {
-      setAreasDeRisco((prev) => [...prev, areaTemp]);
-      setAreaTemp([]);
-      setModoCriacao(false);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      map.on("click", (e: L.LeafletMouseEvent) => {
+        if (drawing) {
+          setNewArea((prev) => {
+            const updated = [...prev, [e.latlng.lat, e.latlng.lng]];
+            return updated;
+          });
+        }
+      });
+
+      mapRef.current = map;
+    }
+  }, [drawing]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Limpa camadas anteriores
+    map.eachLayer((layer) => {
+      if (layer instanceof L.Polygon || layer instanceof L.Marker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Renderiza áreas de risco
+    riskAreas.forEach((area) => {
+      L.polygon(area.coordinates, { color: "red" }).addTo(map);
+    });
+
+    // Renderiza a nova área em desenho
+    if (drawing && newArea.length > 1) {
+      if (drawnLayer.current) {
+        map.removeLayer(drawnLayer.current);
+      }
+      drawnLayer.current = L.polygon(newArea, {
+        color: "orange",
+        dashArray: "4",
+      }).addTo(map);
+    }
+
+    // Renderiza trabalhadores
+    workers.forEach((worker) => {
+      const marker = L.marker([worker.lat, worker.lng]).addTo(map);
+
+      riskAreas.forEach((area) => {
+        const polygon = L.polygon(area.coordinates);
+        if (polygon.getBounds().contains([worker.lat, worker.lng])) {
+          alert(`Alerta: Trabalhador ${worker.id} está em uma área de risco!`);
+        }
+      });
+    });
+  }, [riskAreas, workers, newArea, drawing]);
+
+  const handleCreateRiskArea = () => {
+    if (newArea.length > 2) {
+      const newRisk: RiskArea = {
+        id: Date.now().toString(),
+        coordinates: newArea,
+      };
+      setRiskAreas((prev) => [...prev, newRisk]);
+      setNewArea([]);
+      setDrawing(false);
+      if (drawnLayer.current && mapRef.current) {
+        mapRef.current.removeLayer(drawnLayer.current);
+        drawnLayer.current = null;
+      }
     }
   };
 
-  const cancelarArea = () => {
-    setAreaTemp([]);
-    setModoCriacao(false);
-  };
-
   return (
-    <div className="w-full h-[200px] rounded-xl overflow-hidden border shadow">
-      <MapContainer
-        center={CENTER}
-        zoom={17}
-        style={{ height: "100%", width: "100%" }}
-      >
-        <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+    <div className="relative w-full h-[600px] rounded-xl overflow-hidden">
+      <div id="map" className="absolute inset-0 z-0" />
 
-        <CriadorDeArea ativa={modoCriacao} onAdicionarPonto={adicionarPonto} />
+      {drawing && (
+        <div className="absolute top-4 left-4 z-20 flex gap-4">
+          <Button variant="destructive" onClick={handleCreateRiskArea}>
+            Confirmar Área
+          </Button>
+        </div>
+      )}
 
-        {/* Pontos fixos */}
-        {pontosFixos.map((p, i) => (
-          <Marker key={i} position={p.coords} />
-        ))}
-
-        {/* Área em edição */}
-        {areaTemp.length > 1 && <Polygon positions={areaTemp} color="red" />}
-
-        {/* Áreas de risco salvas */}
-        {areasDeRisco.map((area, i) => (
-          <Polygon key={i} positions={area} color="red" />
-        ))}
-      </MapContainer>
-
-      {/* Controles */}
-      <div className="p-4 bg-white border-t flex flex-wrap gap-2 justify-between items-center">
-        {!modoCriacao ? (
-          <Button onClick={() => setModoCriacao(true)}>
+      {!drawing && (
+        <div className="absolute top-4 left-4 z-20">
+          <Button
+            onClick={() => {
+              setNewArea([]);
+              setDrawing(true);
+            }}
+          >
             Criar Área de Risco
           </Button>
-        ) : (
-          <div className="flex gap-2">
-            <Button onClick={finalizarArea} variant="destructive">
-              Salvar Área
-            </Button>
-            <Button variant="outline" onClick={cancelarArea}>
-              Cancelar
-            </Button>
-          </div>
-        )}
-        <span className="text-sm text-muted-foreground">
-          {modoCriacao
-            ? `Clique no mapa para adicionar pontos (mín. 3)`
-            : `Clique no botão para criar uma nova área`}
-        </span>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
